@@ -12,6 +12,7 @@ from copy import deepcopy
 
 from matplotlib.pyplot import imshow, figure, plot
 
+
 perspective_correction = None
 perspective_correction_inv = None
 perspective_trapezoid = None
@@ -21,9 +22,7 @@ left_fit_avg = None
 right_fit_avg = None
 MIN_DETECTIONS = 8
 MAX_DETECTIONS = 10
-crop_img_height_per=70
 
-100*200/100
 
 # pt1, pt2, ptr3, and pt4 and four points defining a trapezoid used for the perspective correction
 def compute_ROI(image, height1, height2 , lup, rup, rdown, ldown ):
