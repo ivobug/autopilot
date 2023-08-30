@@ -9,7 +9,6 @@ import cv2
 import numpy as np
 from copy import deepcopy
 
-
 from matplotlib.pyplot import imshow, figure, plot
 
 
@@ -20,9 +19,17 @@ warp_size = None
 orig_size = None
 left_fit_avg = None
 right_fit_avg = None
+left_fit=None
+right_fit=None
 MIN_DETECTIONS = 8
 MAX_DETECTIONS = 10
-
+font = cv2.FONT_HERSHEY_SIMPLEX
+wheel=cv2.imread('src/steering-wheel.jpg')
+# Defining variables to hold meter-to-pixel conversion
+ym_per_pix = 30 / 720
+# Standard lane width is 3.7 meters divided by lane width in pixels which is
+# calculated to be approximately 720 pixels not to be confused with frame height
+xm_per_pix = 3.7 / 720
 
 # pt1, pt2, ptr3, and pt4 and four points defining a trapezoid used for the perspective correction
 def compute_ROI(image, height1, height2 , lup, rup, rdown, ldown ):
@@ -84,18 +91,6 @@ def warp(img):
 
 
 
-
-#imshow(cv2.cvtColor(img_bgr, cv2.COLOR_RGB2BGR))
-#figure()
-#img_persp, img_warped = warp(img_bgr)
-#imshow(cv2.cvtColor(img_persp, cv2.COLOR_RGB2BGR))
-#cv2.imshow("Region of interest", img_persp)
-#figure()
-#imshow(cv2.cvtColor(img_warped, cv2.COLOR_RGB2BGR))
-
-
-
-
 def edge_detection(channel):
     edge_x = cv2.Scharr(channel, cv2.CV_64F, 1, 0)  # Edge detection using the Scharr operator
     edge_x = np.absolute(edge_x)
@@ -133,12 +128,6 @@ def threshold(channel_threshold, channel_edge,threshold_up,threshold_down,thresh
     return binary, binary_threshold
 
 
-
-#(img_binary_combined, img_binary_solo) = threshold(img_hls[:, :, 1], img_edge)
-###########################
-#figure()
-#imshow(img_binary_combined)
-#img_binary_combined
 
 
 def histogram(img):
@@ -227,6 +216,7 @@ def fit_slide_window(binary_warped, hist, left_lane_indexes, right_lane_indexes,
 
     if len(sw.left.y) == 0:
         return False, sw
+    
 
     # Fit a second order polynomial to approximate the points
     left_fit = np.polynomial.polynomial.polyfit(sw.left.y, sw.left.x, 2)
@@ -241,8 +231,11 @@ def fit_slide_window(binary_warped, hist, left_lane_indexes, right_lane_indexes,
     # x = Ay^2 + By + C;
     sw.left.fitx = left_fit_avg[2] * sw.ploty ** 2 + left_fit_avg[1] * sw.ploty + left_fit_avg[0]
     sw.right.fitx = right_fit_avg[2] * sw.ploty ** 2 + right_fit_avg[1] * sw.ploty + right_fit_avg[0]
+    
+    ltx = np.trunc(sw.left.fitx)
+    rtx = np.trunc(sw.right.fitx)
 
-    return True, sw
+    return True, sw ,ltx, rtx, left_fit, right_fit
 
 def slide_window(img, binary_warped, hist, num_windows):
     img_height = binary_warped.shape[0]
@@ -292,7 +285,7 @@ def slide_window(img, binary_warped, hist, num_windows):
         if len(non_zero_right) > min_pixels:
             right_x = np.int(np.mean(non_zero_x[non_zero_right]))
 
-    valid, sw = fit_slide_window(binary_warped, hist, left_lane_indexes, right_lane_indexes, non_zero_x, non_zero_y)
+    valid, sw , leftx,rightx, left_fit, right_fit= fit_slide_window(binary_warped, hist, left_lane_indexes, right_lane_indexes, non_zero_x, non_zero_y)
 
     if valid :
         out_img[non_zero_y[sw.left.lane_indexes], non_zero_x[sw.left.lane_indexes]] = [0, 255, 192]
@@ -302,12 +295,71 @@ def slide_window(img, binary_warped, hist, num_windows):
         #figure()
         #imshow(img_plot)
 
-    return valid, sw
+    return valid, sw, leftx ,rightx, sw.ploty, left_fit, right_fit
 
 #lanes = lanes_full_histogram(hist)
 
 #ret, sw = slide_window(img_warped, img_binary_combined, lanes, 15)
 
+def general_search(binary_warped, left_fit, right_fit):
+
+    nonzero = binary_warped.nonzero()
+    nonzeroy = np.array(nonzero[0])
+    nonzerox = np.array(nonzero[1])
+    margin = 100
+    left_lane_inds = ((nonzerox > (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy +left_fit[2] - margin)) & (nonzerox < (left_fit[0]*(nonzeroy**2) +left_fit[1]*nonzeroy + left_fit[2] + margin)))
+    right_lane_inds = ((nonzerox > (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy +
+    right_fit[2] - margin)) & (nonzerox < (right_fit[0]*(nonzeroy**2) +
+    right_fit[1]*nonzeroy + right_fit[2] + margin)))
+
+    leftx = nonzerox[left_lane_inds]
+    lefty = nonzeroy[left_lane_inds]
+    rightx = nonzerox[right_lane_inds]
+    righty = nonzeroy[right_lane_inds]
+    left_fit = np.polyfit(lefty, leftx, 2)
+ 
+    #right_fit = np.polyfit(righty, rightx, 2)
+    ploty = np.linspace(0, binary_warped.shape[0]-1, binary_warped.shape[0])
+    left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
+    #right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
+    
+    ret = {}
+    ret['leftx'] = leftx
+    ret['rightx'] = leftx
+    ret['left_fitx'] = left_fitx
+    ret['right_fitx'] = left_fitx
+    ret['ploty'] = ploty
+
+    return ret
+
+def measure_lane_curvature(ploty, leftx, rightx):
+
+    leftx = leftx[::-1]  # Reverse to match top-to-bottom in y
+    rightx = rightx[::-1]  # Reverse to match top-to-bottom in y
+
+    # Choose the maximum y-value, corresponding to the bottom of the image
+    y_eval = np.max(ploty)
+
+
+    # Fit new polynomials to x, y in world space
+    left_fit_cr = np.polyfit(ploty*ym_per_pix, leftx*xm_per_pix, 2)
+    #right_fit_cr = np.polyfit(ploty*ym_per_pix, rightx*xm_per_pix, 2)
+
+    # Calculate the new radii of curvature
+    left_curverad  = ((1 + (2*left_fit_cr[0]*y_eval*ym_per_pix + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
+    #right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*ym_per_pix + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
+    # Now our radius of curvature is in meters
+    # print(left_curverad, 'm', right_curverad, 'm')
+
+    # Decide if it is a left or a right curve
+        
+    if leftx[-1] - leftx[0] > 60:
+        curve_direction = 'Right Curve'
+    else:
+        curve_direction = 'Left Curve'
+
+    return (left_curverad ) / 2.0, curve_direction
+    
 
 
 def show_lanes(sw, img_warped, img_orig):
@@ -337,20 +389,48 @@ def show_lanes(sw, img_warped, img_orig):
                      (0, 0, 255), 5)
             cv2.line(img, (right_line_warped[i][0], right_line_warped[i][1]),
                      (right_line_warped[i + 1][0], right_line_warped[i + 1][1]), (0, 0, 255), 5)
+    cv2.fillPoly(img_orig, [np.array([[right_line[0][0], right_line[0][1]], [right_line[-1][0], right_line[-1][1]], [left_line[-1][0], left_line[-1][1]],[left_line[0][0], left_line[0][1]]])], (0, 255, 0))
+
 
     return img, img_orig
 
-#left_lanes = deepcopy(sw.left)
-#right_lanes = deepcopy(sw.right)
+def plotSteeringInfo(img_orig,radius, direction):
+    radius=radius-25
+    wheel_radius=radius
+    if radius<0:
+        wheel_radius=360+radius
+    if (direction != 'Straight'):
+        text = 'Radius of Curvature: ' + '{:04.0f}'.format(radius)
+        text1 = 'Curve Direction: ' + (direction)
 
-#img_lane, img_lane_orig = show_lanes(sw, img_warped, img_bgr)
+    else:
+        text = 'Radius of Curvature: ' + 'N/A'
+        text1 = 'Curve Direction: ' + (direction)
 
-###################################
-#imshow(cv2.cvtColor(img_lane_orig, cv2.COLOR_RGB2BGR))
-#alpha = 0.70
+    cv2.putText(img_orig, text , (10,20), font, 0.4, (255,255, 255), 0, cv2.LINE_AA)
+    cv2.putText(img_orig, text1, (10,35), font, 0.4, (255,255, 255), 0, cv2.LINE_AA)
 
-# Perform weighted addition of the input image and the overlay
-#result = cv2.addWeighted(overlay, alpha, img_lane_orig, 1 - alpha, 0)
+    overlay_img1 = np.ones(img_orig.shape,np.uint8)*255
 
-#figure()
-#imshow(cv2.cvtColor(result, cv2.COLOR_RGB2BGR))
+    small_img=cv2.imread('src/steering-wheel.jpg')
+    small_img = cv2.resize(small_img, (50,50), interpolation = cv2.INTER_AREA)
+    print(radius)
+    M = cv2.getRotationMatrix2D((50/2,50/2),-(wheel_radius),1) 
+    small_img = cv2.warpAffine(small_img,M,(50,50)) 
+    rows,cols,channels = small_img.shape
+    overlay_img1[45:rows+45, 10:cols+10 ] = small_img
+
+    img2gray = cv2.cvtColor(overlay_img1,cv2.COLOR_BGR2GRAY)
+    ret, mask = cv2.threshold(img2gray,220,55,cv2.THRESH_BINARY_INV)
+    mask_inv = cv2.bitwise_not(mask)
+
+    temp1 = cv2.bitwise_and(img_orig,img_orig,mask = mask_inv)
+    temp2 = cv2.bitwise_and(overlay_img1,overlay_img1, mask = mask)
+
+    img_orig = cv2.add(temp1,temp2)
+
+
+    return img_orig
+
+
+

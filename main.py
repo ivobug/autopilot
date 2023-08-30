@@ -17,12 +17,10 @@ if (vidcap.isOpened()== False):
 
 success, image = vidcap.read()
 if success == True:
-    img_bgr = imutils.resize(image, width=800)
+    img_bgr = imutils.resize(image, width=1350)
      
   
-#file='road2.jpg'
-#img_bgr = cv2.imread(file)
-#overlay= img_bgr.copy()
+
 class RoiPoints:
     # 'what' and 'why' should probably be fetched in a different way, suitable to the app
     def __init__(self, heightUp, heightDown, my_scale1, my_scale2, my_scale3, my_scale4):
@@ -59,7 +57,7 @@ def exit(value=None):
     
 heightUp = tk.Scale(my_w, from_=0, to=100, orient='horizontal',command=onChange)
 heightUp.grid(row=1,column=1) 
-heightUp.set(56)
+heightUp.set(54)
 
 
 heightDown = tk.Scale(my_w, from_=0, to=100, orient='horizontal',command=onChange)
@@ -68,16 +66,16 @@ heightDown.set(68)
 
 my_scale1 = tk.Scale(my_w, from_=0, to=100, orient='horizontal',command=onChange)
 my_scale1.grid(row=5,column=1) 
-my_scale1.set(44)
+my_scale1.set(42)
 
 my_scale2 = tk.Scale(my_w, from_=0, to=100, orient='horizontal',command=onChange)
 my_scale2.grid(row=7,column=1) 
-my_scale2.set(56)
+my_scale2.set(59)
 
 
 my_scale3 = tk.Scale(my_w, from_=0, to=100, orient='horizontal',command=onChange)
 my_scale3.grid(row=9,column=1) 
-my_scale3.set(81)
+my_scale3.set(79)
 
 
 my_scale4 = tk.Scale(my_w, from_=0, to=100, orient='horizontal',command=onChange)
@@ -89,6 +87,7 @@ exit_button = tk.Button(my_w, text="Save", command=exit)
 exit_button.grid(row=16,column=1) 
 
 points1=RoiPoints(heightUp.get(), heightDown.get(), my_scale1.get(),my_scale2.get(),my_scale3.get(),my_scale4.get())
+
 my_w.mainloop()
 
 ########
@@ -102,6 +101,7 @@ def onChangeThreshold(value=None):
     (img_binary_combined, img_binary_solo) = threshold(img_hls[:, :, 1], img_edge,threshold_up.get(),threshold_down.get(),threshold_break.get())
     cv2.imshow("Threshold", img_binary_combined)
     cv2.imshow("Warped", cv2.cvtColor(img_warped, cv2.COLOR_RGB2BGR))
+    
 
 
 class ThresholdPoints:
@@ -128,7 +128,7 @@ threshold_up.set(15)
 
 threshold_down = tk.Scale(my_w, from_=0, to=255, orient='horizontal',command=onChangeThreshold)
 threshold_down.grid(row=7,column=1) 
-threshold_down.set(60)
+threshold_down.set(100)
 
 
 threshold_break = tk.Scale(my_w, from_=0, to=255, orient='horizontal',command=onChangeThreshold)
@@ -140,17 +140,18 @@ exit_button = tk.Button(my_w, text="Save", command=exit)
 exit_button.grid(row=16,column=1) 
 
 points2= ThresholdPoints(threshold_up.get(), threshold_down.get(), threshold_break.get())
+
 my_w.mainloop()
 
 hist = histogram(img_binary_combined)
 lanes = lanes_full_histogram(hist)
 
-ret, sw = slide_window(img_warped, img_binary_combined, lanes, 15)
+ret, sw, leftx,rightx,ploty,_,_ = slide_window(img_warped, img_binary_combined, lanes, 15)
 
 left_lanes = deepcopy(sw.left)
 right_lanes = deepcopy(sw.right)
 
-img_lane, img_lane_orig = show_lanes(sw, img_warped, img_bgr)
+#img_lane, img_lane_orig = show_lanes(sw, img_warped, img_bgr,"0",0)
 
 
 alpha = 0.70
@@ -166,9 +167,8 @@ while(vidcap.isOpened()):
   # Capture frame-by-frame
   ret, frame = vidcap.read()
   if ret == True:
-    frame = imutils.resize(frame, width=800)
+    frame = imutils.resize(frame, width=1350)
     overlay= frame.copy()
-
     
     compute_ROI(frame,getattr(points1, "heightUp"), getattr(points1, "heightDown"), getattr(points1, "my_scale1"), getattr(points1, "my_scale2"),getattr(points1, "my_scale3"),getattr(points1, "my_scale4") )
     img_persp, img_warped = warp(frame)
@@ -178,11 +178,13 @@ while(vidcap.isOpened()):
 
     hist = histogram(img_binary_combined)
     lanes = lanes_full_histogram(hist)
-    ret, sw = slide_window(img_warped, img_binary_combined, lanes, 15)
-    
+    ret, sw, leftx,rightx,ploty, left_fit, right_fit = slide_window(img_warped, img_binary_combined, lanes, 15)
+    curves_info= general_search(img_binary_combined, left_fit, right_fit)
+    curveRad, curveDir = measure_lane_curvature(ploty, leftx, rightx)
     img_lane, img_lane_orig = show_lanes(sw, img_warped, frame)
-
+    
     result = cv2.addWeighted(overlay, alpha, img_lane_orig, 1 - alpha, 0)
+    result=plotSteeringInfo(result,curveRad, curveDir)
 
     # Display the resulting frame
     cv2.imshow('Frame',result)
@@ -194,5 +196,6 @@ while(vidcap.isOpened()):
   # Break the loop
   else: 
     break
- 
+
+cv2.destroyAllWindows()
 
